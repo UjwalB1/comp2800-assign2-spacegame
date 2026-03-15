@@ -35,6 +35,7 @@ const Messages = {
 let heroImg, 
     enemyImg, 
     laserImg,
+    lifeImg,
     canvas, ctx, 
     gameObjects = [], 
     hero, 
@@ -77,6 +78,9 @@ class Hero extends GameObject {
     this.type = "Hero";
     this.speed = 5;
     this.cooldown = 0;
+    // setup life n score
+    this.life = 3;
+    this.points = 0;
   }
 
   // spawn laser above ship
@@ -98,6 +102,19 @@ class Hero extends GameObject {
   // check if ready to fire
   canFire() {
     return this.cooldown === 0;
+  }
+
+  // lose health on crash
+  decrementLife() {
+    this.life--;
+    if (this.life === 0) {
+      this.dead = true;
+    }
+  }
+
+  // gain score on kill
+  incrementPoints() {
+    this.points += 100;
   }
 }
 
@@ -170,6 +187,14 @@ function updateGameObjects() {
     });
   });
 
+  // check if enemy hit ship
+  enemies.forEach(enemy => {
+    const heroRect = hero.rectFromGameObject();
+    if (intersectRect(heroRect, enemy.rectFromGameObject())) {
+      eventEmitter.emit(Messages.COLLISION_ENEMY_HERO, { enemy });
+    }
+  });
+
   // clear dead objects from arr
   gameObjects = gameObjects.filter(go => !go.dead);
 }
@@ -183,6 +208,30 @@ function loadTexture(path) {
       resolve(img);
     };
   });
+}
+
+// draw ship icons for lives
+function drawLife() {
+  const START_POS = canvas.width - 180;
+  for(let i=0; i < hero.life; i++ ) {
+    ctx.drawImage(
+      lifeImg, 
+      START_POS + (45 * (i+1) ), 
+      canvas.height - 37);
+  }
+}
+
+// draw points text
+function drawPoints() {
+  ctx.font = "30px Arial";
+  ctx.fillStyle = "red";
+  ctx.textAlign = "left";
+  drawText("Points: " + hero.points, 10, canvas.height-20);
+}
+
+// canvas text
+function drawText(message, x, y) {
+  ctx.fillText(message, x, y);
 }
 
 // calc grid and spawn enemies
@@ -250,6 +299,13 @@ function initGame() {
   eventEmitter.on(Messages.COLLISION_ENEMY_LASER, (_, { first, second }) => {
     first.dead = true;
     second.dead = true;
+    hero.incrementPoints(); // give points
+  });
+
+  // kill enemy n drop health
+  eventEmitter.on(Messages.COLLISION_ENEMY_HERO, (_, { enemy }) => {
+    enemy.dead = true;
+    hero.decrementLife();
   });
 }
 
@@ -295,6 +351,7 @@ window.onload = async () => {
   heroImg = await loadTexture("assets/player.png");
   enemyImg = await loadTexture("assets/enemyShip.png");
   laserImg = await loadTexture("assets/laserRed.png");
+  lifeImg = await loadTexture("assets/life.png");
 
   initGame();
   
@@ -304,6 +361,8 @@ window.onload = async () => {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     // check hits n cleanup dead bods
     updateGameObjects();
+    drawPoints();
+    drawLife();
     drawGameObjects(ctx);
   }, 100); // 10 fps lol
 };
