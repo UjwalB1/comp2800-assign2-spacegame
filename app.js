@@ -18,6 +18,11 @@ class EventEmitter {
       this.listeners[message].forEach((l) => l(message, payload));
     }
   }
+
+  // wipe event listeners
+  clear() {
+    this.listeners = {};
+  }
 }
 
 // message names
@@ -27,8 +32,11 @@ const Messages = {
   KEY_EVENT_LEFT: "KEY_EVENT_LEFT",
   KEY_EVENT_RIGHT: "KEY_EVENT_RIGHT",
   KEY_EVENT_SPACE: "KEY_EVENT_SPACE",
+  KEY_EVENT_ENTER: "KEY_EVENT_ENTER", 
   COLLISION_ENEMY_LASER: "COLLISION_ENEMY_LASER",
   COLLISION_ENEMY_HERO: "COLLISION_ENEMY_HERO",
+  GAME_END_LOSS: "GAME_END_LOSS", // loss
+  GAME_END_WIN: "GAME_END_WIN", // win
 };
 
 // global state vars
@@ -39,7 +47,8 @@ let heroImg,
     canvas, ctx, 
     gameObjects = [], 
     hero, 
-    eventEmitter = new EventEmitter();
+    eventEmitter = new EventEmitter(),
+    gameLoopId; // global interval id for resets
 
 
 class GameObject {
@@ -101,7 +110,7 @@ class Hero extends GameObject {
 
   // check if ready to fire
   canFire() {
-    return this.cooldown === 0;
+    return this.cooldown === 0 && !this.dead; 
   }
 
   // lose health on crash
@@ -210,6 +219,66 @@ function loadTexture(path) {
   });
 }
 
+// check if player is dead
+function isHeroDead() {
+  return hero.life <= 0;
+}
+
+// check if enemies are wiped out
+function isEnemiesDead() {
+  const enemies = gameObjects.filter((go) => go.type === "Enemy" && !go.dead);
+  return enemies.length === 0;
+}
+
+// text on screen
+function displayMessage(message, color = "red") {
+  ctx.font = "30px Arial";
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+}
+
+// stop loop and show win/loss screen
+function endGame(win) {
+  clearInterval(gameLoopId);
+
+  // wait for last frame to draw
+  setTimeout(() => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (win) {
+      displayMessage(
+        "Victory!!! Pew Pew... - Press [Enter] to start a new game Captain Pew Pew",
+        "green"
+      );
+    } else {
+      displayMessage(
+        "You died !!! Press [Enter] to start a new game Captain Pew Pew"
+      );
+    }
+  }, 200);  
+}
+
+// wipe slate clean and restart
+function resetGame() {
+  if (gameLoopId) {
+    clearInterval(gameLoopId);
+    eventEmitter.clear();
+    initGame();
+    gameLoopId = setInterval(() => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // check hits n cleanup dead bods
+      updateGameObjects();
+      drawPoints();
+      drawLife();
+      drawGameObjects(ctx);
+    }, 100);
+  }
+}
+
 // draw ship icons for lives
 function drawLife() {
   const START_POS = canvas.width - 180;
@@ -300,12 +369,39 @@ function initGame() {
     first.dead = true;
     second.dead = true;
     hero.incrementPoints(); // give points
+
+    // trigger win if board is clear
+    if (isEnemiesDead()) {
+      eventEmitter.emit(Messages.GAME_END_WIN);
+    }
   });
 
   // kill enemy n drop health
   eventEmitter.on(Messages.COLLISION_ENEMY_HERO, (_, { enemy }) => {
     enemy.dead = true;
     hero.decrementLife();
+
+    // trigger loss before victory check
+    if (isHeroDead()) {
+      eventEmitter.emit(Messages.GAME_END_LOSS);
+      return; 
+    }
+    if (isEnemiesDead()) {
+      eventEmitter.emit(Messages.GAME_END_WIN);
+    }
+  });
+
+  // game over listeners
+  eventEmitter.on(Messages.GAME_END_WIN, () => {
+    endGame(true);
+  });
+  eventEmitter.on(Messages.GAME_END_LOSS, () => {
+    endGame(false);
+  });
+
+  // restart listener
+  eventEmitter.on(Messages.KEY_EVENT_ENTER, () => {
+    resetGame();
   });
 }
 
@@ -339,6 +435,8 @@ window.addEventListener("keydown", (evt) => {
   } else if (evt.keyCode === 32) {
     // spacebar triggers event
     eventEmitter.emit(Messages.KEY_EVENT_SPACE);
+  } else if (evt.key === "Enter") {
+    eventEmitter.emit(Messages.KEY_EVENT_ENTER);
   }
 });
 
@@ -355,7 +453,8 @@ window.onload = async () => {
 
   initGame();
   
-  const gameLoopId = setInterval(() => {
+  // tie to global var for resets
+  gameLoopId = setInterval(() => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
