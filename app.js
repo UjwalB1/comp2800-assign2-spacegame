@@ -26,6 +26,9 @@ const Messages = {
   KEY_EVENT_DOWN: "KEY_EVENT_DOWN",
   KEY_EVENT_LEFT: "KEY_EVENT_LEFT",
   KEY_EVENT_RIGHT: "KEY_EVENT_RIGHT",
+  KEY_EVENT_SPACE: "KEY_EVENT_SPACE",
+  COLLISION_ENEMY_LASER: "COLLISION_ENEMY_LASER",
+  COLLISION_ENEMY_HERO: "COLLISION_ENEMY_HERO",
 };
 
 // global state vars
@@ -49,6 +52,16 @@ class GameObject {
     this.img = undefined;
   }
 
+  // get collision bounds
+  rectFromGameObject() {
+    return {
+      top: this.y,
+      left: this.x,
+      bottom: this.y + this.height,
+      right: this.x + this.width,
+    };
+  }
+
   // put image on canvas
   draw(ctx) {
     ctx.drawImage(this.img, this.x, this.y, this.width, this.height);
@@ -63,6 +76,28 @@ class Hero extends GameObject {
     this.height = 75;
     this.type = "Hero";
     this.speed = 5;
+    this.cooldown = 0;
+  }
+
+  // spawn laser above ship
+  fire() {
+    gameObjects.push(new Laser(this.x + 45, this.y - 10));
+    this.cooldown = 500;
+
+    // reset cooldown timer n kill instantly
+    let id = setInterval(() => {
+      if (this.cooldown > 0) {
+        this.cooldown -= 100;
+        if (this.cooldown === 0) {
+          clearInterval(id);
+        }
+      }
+    }, 200);
+  }
+
+  // check if ready to fire
+  canFire() {
+    return this.cooldown === 0;
   }
 }
 
@@ -85,6 +120,58 @@ class Enemy extends GameObject {
       }
     }, 300);
   }
+}
+
+// shooting logic
+class Laser extends GameObject {
+  constructor(x, y) {
+    super(x, y);
+    this.width = 9;
+    this.height = 33;
+    this.type = 'Laser';
+    this.img = laserImg;
+    
+    // travel up til off screen
+    let id = setInterval(() => {
+      if (this.y > 0) {
+        this.y -= 15;
+      } else {
+        this.dead = true;
+        clearInterval(id);
+      }
+    }, 100);
+  }
+}
+
+// separation test for collisions
+function intersectRect(r1, r2) {
+  return !(
+    r2.left > r1.right ||
+    r2.right < r1.left ||
+    r2.top > r1.bottom ||
+    r2.bottom < r1.top
+  );
+}
+
+// collision checks
+function updateGameObjects() {
+  const enemies = gameObjects.filter(go => go.type === 'Enemy');
+  const lasers = gameObjects.filter(go => go.type === "Laser");
+  
+  // check every laser against every enemy
+  lasers.forEach((laser) => {
+    enemies.forEach((enemy) => {
+      if (intersectRect(laser.rectFromGameObject(), enemy.rectFromGameObject())) {
+        eventEmitter.emit(Messages.COLLISION_ENEMY_LASER, {
+          first: laser,
+          second: enemy,
+        });
+      }
+    });
+  });
+
+  // clear dead objects from arr
+  gameObjects = gameObjects.filter(go => !go.dead);
 }
 
 // async image loader
@@ -151,6 +238,19 @@ function initGame() {
   eventEmitter.on(Messages.KEY_EVENT_RIGHT, () => {
     hero.x += 5;
   });
+
+  // fire weapon
+  eventEmitter.on(Messages.KEY_EVENT_SPACE, () => {
+    if (hero.canFire()) {
+      hero.fire();
+    }
+  });
+
+  // delete both on hit
+  eventEmitter.on(Messages.COLLISION_ENEMY_LASER, (_, { first, second }) => {
+    first.dead = true;
+    second.dead = true;
+  });
 }
 
 // block browser scrolling when playin 
@@ -180,9 +280,11 @@ window.addEventListener("keydown", (evt) => {
     eventEmitter.emit(Messages.KEY_EVENT_LEFT);
   } else if (evt.key === "ArrowRight") {
     eventEmitter.emit(Messages.KEY_EVENT_RIGHT);
+  } else if (evt.keyCode === 32) {
+    // spacebar triggers event
+    eventEmitter.emit(Messages.KEY_EVENT_SPACE);
   }
 });
-
 
 window.onload = async () => {
   // get canvas context
@@ -194,14 +296,14 @@ window.onload = async () => {
   enemyImg = await loadTexture("assets/enemyShip.png");
   laserImg = await loadTexture("assets/laserRed.png");
 
-
   initGame();
   
-
   const gameLoopId = setInterval(() => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // check hits n cleanup dead bods
+    updateGameObjects();
     drawGameObjects(ctx);
   }, 100); // 10 fps lol
 };
